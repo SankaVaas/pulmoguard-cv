@@ -1,0 +1,35 @@
+# Data & weights (large, regenerable - do not commit)
+data/
+outputs/checkpoints/*.pt
+outputs/plots/*.png
+outputs/metrics/*.json
+*.pt
+*.pth
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kaggle credentials - never commit
+kaggle.json
+
+# IDE
+.vscode/
+.idea/
