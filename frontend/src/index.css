@@ -1,0 +1,405 @@
+/*
+  PulmoGuard design system.
+
+  Concept: a diagnostic instrument panel, not a SaaS dashboard. Chest X-ray
+  triage is a data-reading task, so numeric readouts use a monospace face
+  (like a lab instrument display) while everything else uses a plain
+  humanist sans. Color is restrained: deep teal-navy carries the interface,
+  and amber is reserved exclusively for the abstention warning - it never
+  appears as decoration, so when it shows up it means something.
+
+  Palette:
+    --color-ink:         #16221F  (near-black, warm)
+    --color-canvas:      #F4F6F5  (soft cool white)
+    --color-panel:       #FFFFFF
+    --color-primary:     #1B4D4A  (deep teal)
+    --color-primary-dark:#123634
+    --color-border:      #D7DEDA
+    --color-caution:     #B9772E  (amber - abstention only)
+    --color-caution-bg:  #FBF0E2
+    --color-ok:          #2E6B4F  (muted green - confident state)
+    --color-ok-bg:       #ECF5EF
+    --color-error:       #A23B34
+*/
+
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap");
+
+:root {
+  --color-ink: #16221f;
+  --color-canvas: #f4f6f5;
+  --color-panel: #ffffff;
+  --color-primary: #1b4d4a;
+  --color-primary-dark: #123634;
+  --color-border: #d7deda;
+  --color-caution: #b9772e;
+  --color-caution-bg: #fbf0e2;
+  --color-ok: #2e6b4f;
+  --color-ok-bg: #ecf5ef;
+  --color-error: #a23b34;
+
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "SF Mono", Consolas, monospace;
+
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+button:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- Auth page ---------- */
+
+.auth-page {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 36px 32px;
+  display: flex;
+  flex-direction: column;
+}
+
+.auth-card h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--color-primary-dark);
+}
+
+.auth-subtitle {
+  margin: 0 0 28px;
+  color: #5b6663;
+  font-size: 14px;
+}
+
+.auth-card label {
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: #3a4442;
+}
+
+.auth-card input {
+  font-family: inherit;
+  font-size: 15px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  margin-bottom: 18px;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+.auth-card input:focus {
+  border-color: var(--color-primary);
+}
+
+.auth-card button {
+  background: var(--color-primary);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 11px 16px;
+  font-size: 15px;
+  font-weight: 500;
+  transition: background 120ms ease;
+}
+
+.auth-card button:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+}
+
+.auth-card button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.auth-error {
+  background: #fbeceb;
+  color: var(--color-error);
+  border: 1px solid #edc9c6;
+  border-radius: 4px;
+  padding: 10px 12px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+/* ---------- Triage page ---------- */
+
+.triage-page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 40px 24px 64px;
+}
+
+.triage-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.triage-header h1 {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--color-primary-dark);
+  margin: 0;
+}
+
+.logout-button {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #5b6663;
+}
+
+.logout-button:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary-dark);
+}
+
+.triage-intro {
+  color: #4a5451;
+  font-size: 14px;
+  line-height: 1.6;
+  max-width: 56ch;
+  margin-bottom: 28px;
+}
+
+/* ---------- Dropzone ---------- */
+
+.dropzone {
+  border: 1.5px dashed var(--color-border);
+  border-radius: 6px;
+  background: var(--color-panel);
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+  overflow: hidden;
+}
+
+.dropzone--active {
+  border-color: var(--color-primary);
+  background: #eef4f3;
+}
+
+.dropzone--disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.dropzone-placeholder {
+  text-align: center;
+  color: #5b6663;
+}
+
+.dropzone-placeholder p {
+  margin: 4px 0;
+}
+
+.dropzone-subtext {
+  font-size: 13px;
+  color: #8a9490;
+}
+
+.dropzone-preview {
+  max-width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+}
+
+.predict-button {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+  background: var(--color-primary);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 13px 16px;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.predict-button:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+}
+
+.predict-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.triage-error {
+  margin-top: 16px;
+  background: #fbeceb;
+  color: var(--color-error);
+  border: 1px solid #edc9c6;
+  border-radius: 4px;
+  padding: 12px 14px;
+  font-size: 14px;
+}
+
+.triage-disclaimer {
+  margin-top: 48px;
+  font-size: 12px;
+  color: #8a9490;
+  border-top: 1px solid var(--color-border);
+  padding-top: 16px;
+}
+
+/* ---------- Result card ---------- */
+
+.result-card {
+  margin-top: 24px;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.result-banner {
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.result-banner--warning {
+  background: var(--color-caution-bg);
+  color: var(--color-caution);
+}
+
+.result-banner--ok {
+  background: var(--color-ok-bg);
+  color: var(--color-ok);
+}
+
+.result-main {
+  display: flex;
+  flex-direction: column;
+  padding: 20px 20px 8px;
+}
+
+.result-label {
+  font-size: 12px;
+  color: #6f7a76;
+  display: block;
+}
+
+.result-value {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 500;
+  color: var(--color-ink);
+}
+
+.result-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 8px 20px 16px;
+}
+
+.result-grid .result-value {
+  font-size: 18px;
+}
+
+.result-probs {
+  padding: 4px 20px 20px;
+  border-top: 1px solid var(--color-border);
+  margin-top: 4px;
+  padding-top: 16px;
+}
+
+.prob-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 52px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.prob-bar-track {
+  height: 6px;
+  background: var(--color-canvas);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.prob-bar-fill {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: 3px;
+}
+
+.prob-pct {
+  text-align: right;
+}
+
+.result-message {
+  margin: 0;
+  padding: 16px 20px;
+  border-top: 1px solid var(--color-border);
+  font-size: 13px;
+  color: #4a5451;
+}
+
+.result-meta {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 20px 16px;
+  font-size: 12px;
+  color: #8a9490;
+  font-family: var(--font-mono);
+}
