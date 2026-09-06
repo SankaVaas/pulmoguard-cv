@@ -1,0 +1,80 @@
+name: CD
+
+# Builds and publishes versioned Docker images to GitHub Container Registry
+# whenever a semver tag is pushed (e.g. v1.2.0). Deliberately decoupled
+# from CI: CD only runs on an explicit, intentional tag push, never on
+# every merge to main - so a release is always a deliberate human action.
+#
+# This workflow publishes images; it does not deploy them. The final
+# `deploy` job is a placeholder showing where a real deployment step
+# (kubectl apply, ECS service update, etc.) would go - left unimplemented
+# here since target infrastructure is deployment-specific. See
+# docs/ARCHITECTURE.md for the intended deployment topology.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ${{ github.repository }}/pulmoguard-backend
+  FRONTEND_IMAGE: ${{ github.repository }}/pulmoguard-frontend
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Build & push images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:latest
+
+      - name: Build & push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: frontend/Dockerfile
+          push: true
+          build-args: |
+            VITE_API_BASE_URL=${{ vars.PRODUCTION_API_BASE_URL }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:latest
+
+  deploy:
+    name: Deploy (placeholder)
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: production
+    steps:
+      - name: Deploy to target infrastructure
+        run: |
+          echo "Images pushed to GHCR. Wire this job to your target platform:"
+          echo "  - Kubernetes:      kubectl set image deployment/pulmoguard-backend backend=\$IMAGE"
+          echo "  - AWS ECS:         aws ecs update-service --force-new-deployment"
+          echo "  - Fly.io/Render:   flyctl deploy / render deploy hook"
+          echo "See docs/ARCHITECTURE.md for the recommended deployment topology."

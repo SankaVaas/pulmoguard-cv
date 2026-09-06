@@ -33,3 +33,8 @@ kaggle.json
 # IDE
 .vscode/
 .idea/
+
+# Ruff / build artifacts
+.ruff_cache/
+build/
+*.egg-info/
