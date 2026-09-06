@@ -28,7 +28,8 @@ os.environ.setdefault(
     "$2b$12$mL1pB2u1zpk1r7hkfkQxAO6bWpEwB7rHkQmz1J0iCq7hAeC0Xk4Iu",
 )
 
-from app.core.config import get_settings  # noqa: E402
+from app.core.config import get_settings
+from app.services import model_service
 
 get_settings.cache_clear()
 
@@ -61,12 +62,12 @@ class FakePredictor:
 @pytest.fixture
 def client():
     """Yield a TestClient with the model service mocked out (no real checkpoint needed)."""
-    with patch("app.services.model_service.load_model") as mock_load, \
-         patch("app.services.model_service.is_model_loaded", return_value=True), \
-         patch("app.services.model_service.get_predictor", return_value=FakePredictor()):
+    with patch.object(model_service, "load_model") as mock_load, \
+         patch.object(model_service, "is_model_loaded", return_value=True), \
+         patch.object(model_service, "get_predictor", return_value=FakePredictor()):
         mock_load.return_value = None
-        from fastapi.testclient import TestClient
         from app.main import app
+        from fastapi.testclient import TestClient
 
         with TestClient(app) as c:
             yield c
@@ -90,6 +91,7 @@ def auth_token(client):
 
 def _dummy_image_file():
     import io
+
     from PIL import Image
 
     buf = io.BytesIO()
