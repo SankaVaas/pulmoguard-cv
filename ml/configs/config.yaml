@@ -1,0 +1,47 @@
+# PulmoGuard configuration
+# All hyperparameters and paths live here so training/eval/inference
+# never hardcode magic numbers.
+
+project:
+  name: "pulmoguard"
+  seed: 42
+
+data:
+  # Expects torchvision ImageFolder layout:
+  #   data_root/train/NORMAL, data_root/train/PNEUMONIA
+  #   data_root/val/NORMAL,   data_root/val/PNEUMONIA
+  #   data_root/test/NORMAL,  data_root/test/PNEUMONIA
+  data_root: "data/chest_xray"
+  image_size: 224
+  num_workers: 2
+  class_names: ["NORMAL", "PNEUMONIA"]
+
+model:
+  backbone: "efficientnet_b0"     # torchvision backbone name
+  pretrained: true
+  dropout_p: 0.3                  # dropout used both for regularization and MC-Dropout at inference
+  num_classes: 2
+
+train:
+  epochs: 8
+  batch_size: 32
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  label_smoothing: 0.05
+  use_amp: true
+  early_stopping_patience: 3
+  checkpoint_dir: "outputs/checkpoints"
+  best_checkpoint_name: "pulmoguard_best.pt"
+  log_every_n_steps: 20
+
+uncertainty:
+  mc_dropout_passes: 20           # stochastic forward passes at inference
+  abstain_entropy_threshold: 0.35 # predictive entropy above this => abstain (tunable via evaluate.py sweep)
+
+evaluate:
+  metrics_dir: "outputs/metrics"
+  plots_dir: "outputs/plots"
+  coverage_steps: 21              # granularity of the risk-coverage curve (0% to 100%)
+
+inference:
+  default_checkpoint: "outputs/checkpoints/pulmoguard_best.pt"
