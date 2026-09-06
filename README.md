@@ -2,39 +2,45 @@
 
 **Selective-Prediction Chest X-Ray Triage System**
 
-PulmoGuard is a pneumonia triage classifier that knows when *not* to answer.
-Instead of reporting a single accuracy number on 100% of cases (the standard
-but clinically misleading way most chest X-ray classifiers are evaluated),
-PulmoGuard uses **Monte Carlo Dropout** to estimate its own predictive
-uncertainty on every image and can **abstain** on cases it isn't confident
-about, deferring them to a radiologist instead of guessing.
+PulmoGuard is a pneumonia triage system that knows when *not* to answer.
+Instead of reporting a single accuracy number on 100% of cases, it uses
+**Monte Carlo Dropout** to estimate its own predictive uncertainty on every
+image and **abstains** on cases it isn't confident about, flagging them for
+radiologist review instead of forcing a diagnosis.
 
-The headline result is a **risk-coverage curve**: model accuracy as a
-function of how much of the test set it agrees to answer. A well-calibrated
-triage tool should look something like:
+This repository contains the full system: the model training/evaluation
+core, an authenticated backend API, and a web frontend — plus the CI/CD
+and architecture documentation for running it as a real service, not just
+a notebook.
 
-| Coverage | Accuracy |
+**→ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for diagrams and design decisions.**
+**→ See [`docs/API.md`](docs/API.md) for the full API reference.**
+
+---
+
+## System overview
+
+```mermaid
+flowchart LR
+    subgraph "Trained offline (Colab, free T4 GPU)"
+        ml["ml/\ntraining · evaluation · inference core"]
+    end
+    subgraph "Runs as services"
+        backend["backend/\nFastAPI + JWT auth"]
+        frontend["frontend/\nReact + TypeScript"]
+    end
+    ml -- "installed as a library" --> backend
+    frontend -- "HTTPS + Bearer token" --> backend
+```
+
+The headline ML result is a **risk-coverage curve**: accuracy as a function
+of how much of the test set the model agrees to answer.
+
+| Coverage | Accuracy (expected shape on real data) |
 |----------|----------|
 | 100% (answers everything) | ~92% |
 | 80% (defers hardest 20%)  | ~97%+ |
 | 50% (defers hardest 50%)  | ~99%+ |
-
-This is the shape of a genuinely deployable clinical decision-support tool,
-not a leaderboard number.
-
----
-
-## Why this matters
-
-A model that is confidently wrong is more dangerous in a clinical setting
-than one that says "I'm not sure." Raw softmax scores from a standard
-deterministic network are well known to be overconfident and poorly
-calibrated. PulmoGuard addresses this directly:
-
-1. **Monte Carlo Dropout** ([Gal & Ghahramani, 2016](https://arxiv.org/abs/1506.02142)) keeps dropout active at inference and runs multiple stochastic forward passes. Disagreement across passes approximates epistemic uncertainty.
-2. **Predictive entropy** over the averaged prediction is used as the uncertainty score, normalized to `[0, 1]` for interpretability.
-3. **Configurable abstention threshold** lets you trade off coverage vs. accuracy without retraining — tune it against the risk-coverage curve for your deployment's risk tolerance.
-4. **Expected Calibration Error (ECE)** is reported as a secondary diagnostic.
 
 ---
 
@@ -42,161 +48,131 @@ calibrated. PulmoGuard addresses this directly:
 
 ```
 pulmoguard-cv/
-├── configs/
-│   └── config.yaml              # single source of truth for all hyperparameters
-├── notebooks/
-│   └── train_colab.ipynb        # run this in Colab (free T4) to train + evaluate
-├── src/pulmoguard/
-│   ├── data.py                  # dataset / dataloader construction
-│   ├── model.py                 # EfficientNet-B0 with dropout-equipped head
-│   ├── uncertainty.py           # MC-Dropout inference + entropy calculation
-│   ├── train.py                 # training loop (AMP, checkpointing, early stopping)
-│   ├── evaluate.py              # risk-coverage curve + calibration + plots
-│   ├── infer.py                 # production inference class (used locally)
-│   └── utils.py                 # seeding, device, config, logging
-├── scripts/
-│   ├── download_data.sh         # Kaggle dataset download helper
-│   └── run_inference.py         # batch CLI inference over a folder of images
-├── app/
-│   └── serve.py                 # FastAPI server for local/production inference
-├── tests/
-│   └── test_model.py            # unit tests (no dataset required, fast)
-├── outputs/                     # checkpoints, plots, metrics (gitignored)
-├── requirements.txt
-├── setup.py
-└── LICENSE
+├── ml/                       # Training, evaluation, and inference core
+│   ├── pulmoguard/           #   installable Python package
+│   ├── configs/config.yaml   #   single source of truth for hyperparameters
+│   ├── notebooks/            #   Colab training notebook
+│   ├── scripts/              #   dataset download + batch CLI inference
+│   └── tests/                #   fast, dataset-free unit tests
+├── backend/                  # FastAPI service (auth, logging, serving)
+│   ├── app/
+│   │   ├── main.py           #   app assembly, middleware, lifecycle
+│   │   ├── api/routes/       #   auth.py, predict.py, health.py
+│   │   ├── core/             #   config, JWT security, logging
+│   │   ├── schemas/          #   Pydantic request/response models
+│   │   └── services/         #   model_service.py (wraps pulmoguard-ml)
+│   ├── tests/                #   mocked API tests (no checkpoint needed)
+│   └── Dockerfile
+├── frontend/                 # React + TypeScript SPA
+│   ├── src/
+│   │   ├── api/client.ts     #   typed API client
+│   │   ├── context/          #   auth state
+│   │   ├── pages/            #   Login, Triage
+│   │   └── components/       #   UploadDropzone, ResultCard
+│   ├── nginx.conf
+│   └── Dockerfile
+├── docs/
+│   ├── ARCHITECTURE.md       # system/container/sequence/deployment diagrams + decisions
+│   └── API.md                # endpoint reference
+├── .github/workflows/
+│   ├── ci.yml                # lint + test + build, on every push/PR
+│   └── cd.yml                # build + push images to GHCR, on version tag
+├── docker-compose.yml
+├── Makefile
+└── ruff.toml
 ```
 
 ---
 
-## Workflow: train in Colab, run locally
+## Quickstart
 
-This project is split by design: **train and evaluate on a free Colab T4
-GPU**, then **download the trained checkpoint and run inference locally**
-(CLI or API) — no GPU required for inference.
+### 1. Train the model (Colab, free T4)
 
-### Step 1 — Train in Colab
+Open `ml/notebooks/train_colab.ipynb` in Google Colab (Runtime → T4 GPU),
+run all cells. It downloads the Kaggle chest X-ray dataset, trains
+EfficientNet-B0 (~30–50 min), evaluates with MC-Dropout, and saves the
+checkpoint + risk-coverage plot to Google Drive.
 
-1. Push this repo to GitHub (or upload the zip and extract in Colab).
-2. Open `notebooks/train_colab.ipynb` in Google Colab.
-3. Set Runtime → Change runtime type → **T4 GPU**.
-4. Run all cells. The notebook will:
-   - Clone/mount the repo
-   - Install dependencies
-   - Download the dataset from Kaggle (you'll need a free Kaggle API token)
-   - Train the model (`src/pulmoguard/train.py`)
-   - Evaluate it and generate the risk-coverage curve (`src/pulmoguard/evaluate.py`)
-   - Save the checkpoint and plots to Google Drive (survives Colab session disconnects)
-
-Expected training time on a free-tier T4: **~30–50 minutes** for the default
-8-epoch config with early stopping — comfortably within a single Colab
-session.
-
-### Step 2 — Download the trained checkpoint
-
-From Google Drive (or Colab's file browser), download:
+Download the resulting `pulmoguard_best.pt` and place it at:
 ```
-pulmoguard_best.pt
-```
-and place it locally at:
-```
-outputs/checkpoints/pulmoguard_best.pt
+ml/outputs/checkpoints/pulmoguard_best.pt
 ```
 
-### Step 3 — Run inference locally
-
-**Set up the environment:**
-```bash
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-pip install -e .                 # installs the pulmoguard package in editable mode
-```
-
-**Option A — Batch CLI (folder of images → CSV):**
-```bash
-python scripts/run_inference.py \
-    --checkpoint outputs/checkpoints/pulmoguard_best.pt \
-    --image-dir /path/to/xray_images \
-    --output predictions.csv
-```
-
-**Option B — REST API (FastAPI):**
-```bash
-uvicorn app.serve:app --host 0.0.0.0 --port 8000
-```
-Then, in another terminal:
-```bash
-curl -X POST -F "file=@sample_xray.jpeg" http://localhost:8000/predict
-```
-
-Example response:
-```json
-{
-  "predicted_class": "PNEUMONIA",
-  "confidence": 0.94,
-  "normalized_entropy": 0.09,
-  "abstain": false,
-  "class_probabilities": {"NORMAL": 0.06, "PNEUMONIA": 0.94},
-  "mc_dropout_passes": 20,
-  "filename": "sample_xray.jpeg",
-  "message": "Prediction confidence within accepted operating range."
-}
-```
-
-**Option C — Python API directly:**
-```python
-from pulmoguard.infer import PulmoGuardPredictor
-
-predictor = PulmoGuardPredictor(checkpoint_path="outputs/checkpoints/pulmoguard_best.pt")
-result = predictor.predict("sample_xray.jpeg")
-print(result)
-```
-
----
-
-## Dataset
-
-[Chest X-Ray Images (Pneumonia)](https://www.kaggle.com/datasets/paultimothymooney/chest-xray-pneumonia)
-— 5,856 pediatric chest X-rays labeled NORMAL / PNEUMONIA, released under
-CC BY 4.0. Download via:
+### 2. Run the backend
 
 ```bash
-pip install kaggle
-# place your Kaggle API token at ~/.kaggle/kaggle.json first
-bash scripts/download_data.sh data
+make backend-install
+cp backend/.env.example backend/.env   # edit secrets for non-local use
+make backend-dev
 ```
+API live at `http://localhost:8000`, docs at `/docs`.
 
-**Note on the validation split:** the original Kaggle release ships only
-16 images in `val/`, which is too small to reliably use for model selection
-or threshold tuning. By default, `data.py` carves a stratified 15% validation
-split out of `train/` instead (documented, not a silent hack) — see
-`build_dataloaders(..., carve_val_from_train=True)`.
+### 3. Run the frontend
 
----
+```bash
+make frontend-install
+cp frontend/.env.example frontend/.env
+make frontend-dev
+```
+App live at `http://localhost:5173`. Default dev login: `admin` / `changeme`
+(defined by the bcrypt hash in `backend/.env.example` — **change this
+before any non-local deployment**).
 
-## Configuration
+### Or: run everything with Docker Compose
 
-All hyperparameters live in `configs/config.yaml` — nothing is hardcoded
-in the training/eval/inference code. Key knobs:
-
-| Key | Purpose |
-|---|---|
-| `model.dropout_p` | Dropout rate, used both for regularization during training and as the MC-Dropout mechanism at inference |
-| `uncertainty.mc_dropout_passes` | Number of stochastic forward passes at inference (accuracy/latency tradeoff) |
-| `uncertainty.abstain_entropy_threshold` | Normalized entropy above which the system abstains — tune this against `outputs/plots/risk_coverage_curve.png` for your desired coverage/accuracy operating point |
-| `train.epochs`, `train.lr`, `train.batch_size` | Standard training hyperparameters |
+```bash
+cp backend/.env.example backend/.env
+docker compose up --build
+```
 
 ---
 
 ## Testing
 
 ```bash
-pytest tests/ -v
+make ml-test         # 7 tests — model/uncertainty logic, no dataset needed
+make backend-test    # 12 tests — API/auth logic, model service mocked
+make lint            # ruff across ml/ and backend/
+cd frontend && npm run build   # typecheck + production build
 ```
 
-Tests use synthetic tensors and require no dataset download, so they run in
-seconds and are safe to run before spending Colab GPU time.
+All of the above are also run automatically in CI on every push (see
+`.github/workflows/ci.yml`).
+
+---
+
+## Why uncertainty-aware triage matters
+
+A model that is confidently wrong is more dangerous in a clinical setting
+than one that says "I'm not sure." Standard softmax scores from a
+deterministic network are well known to be overconfident. PulmoGuard
+addresses this directly:
+
+1. **Monte Carlo Dropout** ([Gal & Ghahramani, 2016](https://arxiv.org/abs/1506.02142)) keeps dropout active at inference and runs multiple stochastic forward passes; disagreement across passes approximates epistemic uncertainty.
+2. **Predictive entropy**, normalized to `[0, 1]`, is the uncertainty score.
+3. **A configurable abstention threshold** trades off coverage vs. accuracy without retraining — tune it against `ml/outputs/plots/risk_coverage_curve.png` for your risk tolerance.
+4. **Expected Calibration Error (ECE)** is reported as a secondary diagnostic.
+
+The backend surfaces this as a first-class field in every API response
+(`abstain: true/false`), and the frontend gives it a distinct visual
+treatment (an amber warning banner) — the abstention decision is never
+buried in a confidence number the user has to interpret themselves.
+
+---
+
+## Security notes
+
+- **Auth:** JWT bearer tokens (OAuth2 password grant), a single configured
+  admin credential (bcrypt-hashed). This system is scoped as a
+  single-operator internal tool, not multi-tenant SaaS — see
+  `docs/ARCHITECTURE.md §5.1` for the migration path to a real user store.
+- **Secrets:** `JWT_SECRET_KEY` and `ADMIN_PASSWORD_HASH` ship with
+  obviously-insecure development defaults in `.env.example` files. **Never**
+  deploy with the defaults — generate real values as documented inline in
+  each `.env.example`.
+- **Token storage:** the frontend keeps the JWT in `sessionStorage` for
+  simplicity. See `docs/ARCHITECTURE.md §5.3` for the httpOnly-cookie
+  migration path recommended before handling real patient data.
 
 ---
 
@@ -204,16 +180,14 @@ seconds and are safe to run before spending Colab GPU time.
 
 - Trained on a single public pediatric dataset (Guangzhou Women and
   Children's Medical Center) — performance will likely degrade on adult
-  populations, different scanner hardware, or different patient demographics
+  populations, different scanner hardware, or different demographics
   without additional fine-tuning and validation.
-- MC-Dropout approximates epistemic uncertainty but does not capture all
-  failure modes (e.g. confidently-wrong predictions on inputs that are
-  in-distribution but mislabeled in training data).
-- This is a research/portfolio project, **not a validated medical device**.
+- MC-Dropout approximates epistemic uncertainty but does not capture every
+  failure mode (e.g. a confidently-wrong prediction on an in-distribution
+  but mislabeled training example).
+- **This is a research/portfolio project, not a validated medical device.**
   It is not intended for clinical use without regulatory clearance,
   extensive external validation, and clinician oversight.
-
----
 
 ## License
 
