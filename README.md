@@ -15,6 +15,7 @@ a notebook.
 
 **→ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for diagrams and design decisions.**
 **→ See [`docs/API.md`](docs/API.md) for the full API reference.**
+**→ See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for Docker Compose / Fly.io / Render deploy guides.**
 
 ---
 
@@ -73,14 +74,22 @@ pulmoguard-cv/
 │   └── Dockerfile
 ├── docs/
 │   ├── ARCHITECTURE.md       # system/container/sequence/deployment diagrams + decisions
-│   └── API.md                # endpoint reference
+│   ├── API.md                # endpoint reference
+│   └── DEPLOYMENT.md         # Docker Compose / Fly.io / Render deploy guides
+├── reverse-proxy/
+│   └── nginx.conf            # single-domain proxy: routes /api,/health to backend
 ├── .github/workflows/
 │   ├── ci.yml                # lint + test + build, on every push/PR
 │   └── cd.yml                # build + push images to GHCR, on version tag
-├── docker-compose.yml
+├── docker-compose.yml         # dev topology: direct ports, CORS
+├── docker-compose.prod.yml    # prod topology: single reverse-proxy entrypoint
+├── render.yaml                 # Render Blueprint (both services)
 ├── Makefile
 └── ruff.toml
 ```
+
+`backend/fly.toml` and `frontend/fly.toml` (Fly.io app configs) live
+alongside their respective services.
 
 ---
 
@@ -170,9 +179,14 @@ buried in a confidence number the user has to interpret themselves.
   obviously-insecure development defaults in `.env.example` files. **Never**
   deploy with the defaults — generate real values as documented inline in
   each `.env.example`.
-- **Token storage:** the frontend keeps the JWT in `sessionStorage` for
-  simplicity. See `docs/ARCHITECTURE.md §5.3` for the httpOnly-cookie
-  migration path recommended before handling real patient data.
+- **Token storage:** the frontend authenticates via an httpOnly,
+  `SameSite=Strict` session cookie — the JWT is never exposed to page
+  JavaScript at all. See `docs/ARCHITECTURE.md §5.3` for the full
+  rationale, including the CSRF analysis and the known limitation
+  (no server-side token revocation before natural expiry).
+- **Rate limiting:** enforced per-IP on every endpoint (30/min default),
+  with a stricter limit on `/api/v1/auth/token` (10/min) to blunt
+  credential brute-forcing. See `docs/API.md` and `docs/ARCHITECTURE.md §5.7`.
 
 ---
 

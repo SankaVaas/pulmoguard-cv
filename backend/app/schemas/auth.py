@@ -12,3 +12,7 @@ class TokenResponse(BaseModel):
 
 class TokenPayload(BaseModel):
     sub: str
+
+
+class UserResponse(BaseModel):
+    username: str

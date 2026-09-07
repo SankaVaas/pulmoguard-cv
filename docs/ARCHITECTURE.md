@@ -131,13 +131,17 @@ flowchart TB
     fe_c -- "reverse-proxied API calls\n(browser → backend directly today;\nsee note below)" --> be_c
 ```
 
-**Note on the frontend→backend path:** the frontend currently calls the
-backend's public URL directly from the browser (`VITE_API_BASE_URL`),
-relying on the backend's CORS policy. For a production deployment behind a
-single domain, put both services behind a reverse proxy (nginx, Traefik,
-or a cloud load balancer) that routes `/api/*` to the backend and
-everything else to the frontend — this removes the need for CORS entirely
-and lets both services share one TLS certificate.
+**Note on the frontend→backend path:** the recommended production topology
+is the single-domain reverse proxy in `reverse-proxy/nginx.conf` (wired up
+in `docker-compose.prod.yml`), which routes `/api/*` and `/health/*` to the
+backend and everything else to the frontend's static build. This removes
+the need for CORS entirely (the browser never makes a cross-origin
+request) and lets the auth cookie's `SameSite=Strict` attribute work
+without any special-casing, since both services share one origin. The
+simpler `docker-compose.yml` (two directly-exposed ports, CORS-mediated)
+remains available for local development, where the extra proxy hop adds
+friction without adding safety. See `docs/DEPLOYMENT.md` for the concrete
+deploy paths (Docker Compose, Fly.io, Render).
 
 ---
 
@@ -170,17 +174,58 @@ the same process issues and verifies tokens.
 asymmetric signing so only the auth-issuing component holds the private
 key and other services hold only the public key for verification.
 
-### 5.3 Why the JWT lives in `sessionStorage`, not an httpOnly cookie
+### 5.3 Why the session lives in an httpOnly cookie, not `sessionStorage`
 
-`sessionStorage` was chosen for simplicity: no cookie/CSRF plumbing, and
-the token naturally clears when the tab closes. The known tradeoff is that
-`sessionStorage` is readable by any JavaScript on the page, so it's more
-exposed to XSS than an httpOnly cookie would be.
+The frontend authenticates via an httpOnly, `SameSite=Strict` cookie
+(`pulmoguard_access_token`) set directly by the backend's `/auth/token`
+response, rather than storing the raw JWT in `sessionStorage` for the
+page's own JavaScript to attach manually. `httpOnly` means the token is
+never readable by any script running on the page at all, which removes an
+entire class of XSS-driven token theft — an injected script can still
+make an authenticated request (the browser attaches the cookie
+automatically), but it can never exfiltrate the token itself to a
+third party.
 
-**Migration path:** for a deployment handling real patient data, move the
-token to an httpOnly, `Secure`, `SameSite=Strict` cookie set directly by
-the backend's `/auth/token` response, and add CSRF-token double-submit
-protection on state-changing requests.
+- **`SameSite=Strict`** withholds the cookie on genuinely cross-site
+  requests. Frontend and backend are same-site by the browser's
+  definition (same registrable domain, regardless of port/subdomain) both
+  in local dev (`localhost:5173` / `localhost:8000`) and in the
+  recommended single-domain production topology (Section 4), so this
+  needed no further CSRF-token plumbing on top of it for this system's
+  threat model — see the caveat below.
+- **`Secure`** is forced on outside `ENVIRONMENT=development`, since a
+  `Secure` cookie is refused by browsers over plain HTTP. This is why TLS
+  termination in front of the stack is a hard requirement in any real
+  deployment — see the TLS note in `reverse-proxy/nginx.conf`.
+- **No client-side token storage at all.** The frontend's `AuthContext`
+  doesn't hold a token; it asks the backend "am I logged in?" via
+  `GET /api/v1/auth/me` on page load, which succeeds or fails purely based
+  on whatever cookie the browser attaches.
+- **API/CLI clients are unaffected.** `/auth/token`'s JSON response still
+  includes the raw `access_token`, and `get_current_user` (`api/deps.py`)
+  accepts either the cookie or a standard `Authorization: Bearer` header —
+  curl, scripts, and Swagger UI's "Authorize" button all keep working
+  exactly as before.
+
+**Known limitation, recorded honestly:** stateless JWTs can't be
+server-side revoked before they expire without maintaining a token
+blocklist, which this system doesn't implement — `/auth/logout` clears
+the browser's cookie (ending the *session* a user experiences), but a
+copied token would technically remain valid against the API until its
+natural expiry (`ACCESS_TOKEN_EXPIRE_MINUTES`, default 60). This is an
+acceptable tradeoff for a single-operator internal tool; a token
+blocklist (checked in `decode_access_token`) or a move to short-lived
+access tokens + refresh tokens is the standard fix if that risk profile
+changes.
+
+**CSRF, considered explicitly:** `SameSite=Strict` alone is standard,
+adequate CSRF protection for this system because every state-changing
+request is XHR/fetch from the SPA's own JS, not a classic HTML form post —
+there is no cross-site page anywhere that could trigger a authenticated
+POST simply by the victim's browser visiting it. If this API ever needs to
+accept requests from a genuinely different site (e.g. an OAuth-style
+redirect flow), add explicit double-submit CSRF tokens at that point;
+don't rely on `SameSite` alone once that assumption changes.
 
 ### 5.4 Why MC-Dropout rather than a deep ensemble or conformal prediction
 
@@ -212,6 +257,37 @@ There is no SEO surface to optimize (it's an authenticated internal tool)
 and no content that needs to render before JS loads. A static SPA served
 by nginx is the simplest thing that satisfies the requirements, and it
 keeps the frontend fully decoupled from the backend's runtime.
+
+### 5.7 Why rate limiting is keyed by IP, in-memory, with a stricter override on auth
+
+[slowapi](https://github.com/laurentS/slowapi) enforces `RATE_LIMIT_PER_MINUTE`
+on every route by default, with `/api/v1/auth/token` carrying its own
+stricter `AUTH_RATE_LIMIT_PER_MINUTE` — that split exists because the two
+endpoints face different threat models: `/predict` abuse is mostly a cost/
+availability concern, while `/auth/token` is the specific endpoint a
+credential brute-force attempt would target and warrants a tighter limit.
+
+Keying by client IP (`get_remote_address`) rather than by authenticated
+user was the simplest option that still covers the auth endpoint itself,
+where no user identity exists yet — using one key function everywhere
+keeps the mental model consistent instead of switching strategies per route.
+
+**Known limitations, recorded honestly:**
+- Clients behind a shared NAT or corporate proxy share one IP's quota.
+  Acceptable for a single-operator internal tool; would need a per-user
+  (JWT-subject-keyed) limit on authenticated routes if this becomes
+  multi-tenant.
+- The default in-memory storage backend means limits reset on every
+  backend restart and are **not shared across multiple replicas** — each
+  replica enforces its own independent quota, so the effective limit
+  scales with replica count. This is fine for the single-instance
+  deployment this project targets.
+
+**Migration path:** swap the `Limiter`'s storage to Redis
+(`storage_uri="redis://..."`, already stubbed as a comment in
+`backend/app/core/rate_limit.py`) the moment the backend runs as more than
+one replica — no other code changes are required, since slowapi reads
+from whatever storage backend it's configured with transparently.
 
 ---
 

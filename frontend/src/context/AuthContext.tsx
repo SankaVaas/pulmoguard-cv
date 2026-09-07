@@ -1,41 +1,66 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
-import { login as apiLogin, type TokenResponse } from "../api/client";
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import {
+  login as apiLogin,
+  logout as apiLogout,
+  getCurrentUser,
+  ApiError,
+} from "../api/client";
 
 /**
- * Auth state is kept in React state (source of truth for the running app)
- * and mirrored to sessionStorage so a page refresh doesn't force re-login,
- * while still clearing automatically when the browser tab closes -
- * a reasonable middle ground for an internal clinical tool. See
- * docs/ARCHITECTURE.md for the tradeoffs vs. httpOnly cookies.
+ * Auth state now lives entirely server-side, in an httpOnly session cookie
+ * the browser manages automatically - this context never touches the JWT
+ * itself. On mount, it asks the backend "am I still logged in?" via
+ * GET /api/v1/auth/me (which succeeds or fails based on the cookie), so a
+ * page refresh doesn't force a re-login without any client-side token
+ * storage. See docs/ARCHITECTURE.md §5.3 for why this replaced the earlier
+ * sessionStorage-based approach.
  */
 
-const STORAGE_KEY = "pulmoguard_token";
-
 interface AuthContextValue {
-  token: string | null;
+  username: string | null;
   isAuthenticated: boolean;
+  isCheckingSession: boolean;
   login: (username: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => sessionStorage.getItem(STORAGE_KEY));
+  const [username, setUsername] = useState<string | null>(null);
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
 
-  const login = useCallback(async (username: string, password: string) => {
-    const response: TokenResponse = await apiLogin(username, password);
-    sessionStorage.setItem(STORAGE_KEY, response.access_token);
-    setToken(response.access_token);
+  useEffect(() => {
+    getCurrentUser()
+      .then((user) => setUsername(user.username))
+      .catch(() => setUsername(null))
+      .finally(() => setIsCheckingSession(false));
   }, []);
 
-  const logout = useCallback(() => {
-    sessionStorage.removeItem(STORAGE_KEY);
-    setToken(null);
+  const login = useCallback(async (usernameInput: string, password: string) => {
+    await apiLogin(usernameInput, password);
+    setUsername(usernameInput);
+  }, []);
+
+  const logout = useCallback(async () => {
+    try {
+      await apiLogout();
+    } catch (err) {
+      // Best-effort: even if the network call fails, clear local state so
+      // the UI reflects "logged out" - a stale cookie will still fail
+      // server-side auth checks on its own.
+      if (!(err instanceof ApiError)) {
+        console.error("Logout request failed:", err);
+      }
+    } finally {
+      setUsername(null);
+    }
   }, []);
 
   return (
-    <AuthContext.Provider value={{ token, isAuthenticated: token !== null, login, logout }}>
+    <AuthContext.Provider
+      value={{ username, isAuthenticated: username !== null, isCheckingSession, login, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );

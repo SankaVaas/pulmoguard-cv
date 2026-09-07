@@ -14,10 +14,22 @@ All endpoints return JSON. Errors follow the shape `{"detail": "..."}`
 
 ### `POST /api/v1/auth/token`
 
-Exchange credentials for a bearer token. Uses OAuth2 password-grant form
+Exchange credentials for a session. Uses OAuth2 password-grant form
 encoding (`application/x-www-form-urlencoded`), not JSON — this is what
 lets Swagger UI's "Authorize" button and standard OAuth2 client libraries
 work against this endpoint unmodified.
+
+On success, this endpoint **both**:
+- sets an httpOnly, `SameSite=Strict` session cookie on the response (how
+  the browser frontend authenticates from then on — the JWT is never
+  exposed to page JavaScript), **and**
+- returns the raw token in the JSON body (how API/CLI clients and Swagger
+  UI's "Authorize" button authenticate — they use the `Authorization:
+  Bearer <token>` header instead of the cookie).
+
+Either mechanism is independently sufficient for subsequent requests —
+see `api/deps.py::get_current_user`, which checks the cookie first, then
+falls back to the `Authorization` header.
 
 **Request body** (form-encoded):
 | Field | Type | Required |
@@ -35,11 +47,37 @@ work against this endpoint unmodified.
 ```
 
 **Response `401`:** incorrect username or password.
+**Response `429`:** too many attempts — see Rate limiting below.
 
 **Example:**
 ```bash
-curl -X POST http://localhost:8000/api/v1/auth/token \
+curl -i -X POST http://localhost:8000/api/v1/auth/token \
   -d "username=admin&password=changeme"
+```
+
+### `GET /api/v1/auth/me`
+
+Returns the currently authenticated username. Used by the frontend on
+page load to check whether an existing session cookie is still valid,
+without ever reading or storing the token itself in JavaScript. Requires
+a valid cookie or bearer token, same as `/predict`.
+
+**Response `200`:**
+```json
+{ "username": "admin" }
+```
+**Response `401`:** no valid session.
+
+### `POST /api/v1/auth/logout`
+
+Clears the session cookie, ending the browser session. Stateless JWTs
+can't be server-side revoked before their natural expiry without a
+blocklist (not implemented here — see `docs/ARCHITECTURE.md §5.3`), but
+this ends the session a user actually experiences when they click "Sign out."
+
+**Response `200`:**
+```json
+{ "detail": "Logged out" }
 ```
 
 ---
@@ -49,9 +87,13 @@ curl -X POST http://localhost:8000/api/v1/auth/token \
 ### `POST /api/v1/predict`
 
 Upload a chest X-ray image and receive a triage prediction with an
-uncertainty-based abstention decision. **Requires** a valid bearer token.
+uncertainty-based abstention decision. **Requires authentication** —
+either the session cookie set by `/auth/token` (how the browser frontend
+calls this) or an `Authorization: Bearer <token>` header (how API/CLI
+clients call this).
 
-**Headers:**
+**Headers** (only needed for non-browser clients; the browser sends its
+session cookie automatically):
 | Header | Value |
 |---|---|
 | `Authorization` | `Bearer <token>` |
@@ -136,4 +178,4 @@ endpoint, not `/health/live`.
 
 - **CORS:** allowed origins are configured via `CORS_ORIGINS` (comma-separated) in backend config; only `GET`/`POST` are permitted.
 - **Request tracing:** every response includes an `X-Request-ID` header. Supply your own to correlate a client-side error with server logs, or read the server-generated one back.
-- **Rate limiting:** `RATE_LIMIT_PER_MINUTE` is defined in configuration as a forward-looking setting; enforcement is not yet wired into middleware — see `docs/ARCHITECTURE.md` for planned hardening.
+- **Rate limiting:** enforced per client IP via [slowapi](https://github.com/laurentS/slowapi). `/api/v1/auth/token` has its own stricter limit (`AUTH_RATE_LIMIT_PER_MINUTE`, default 10/min) since it's the endpoint a credential brute-force attempt would target; every other route falls under the general default (`RATE_LIMIT_PER_MINUTE`, default 30/min). Responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` headers. Exceeding the limit returns `429 Too Many Requests`. Set `RATE_LIMIT_ENABLED=false` to disable entirely (e.g. local load testing). Limits are enforced in-memory per backend process — see `docs/ARCHITECTURE.md` for the Redis-backed path needed once the backend runs as more than one replica.

@@ -5,25 +5,25 @@ import { ResultCard } from "../components/ResultCard";
 import { predict, ApiError, type PredictionResponse } from "../api/client";
 
 export function TriagePage() {
-  const { token, logout } = useAuth();
+  const { logout } = useAuth();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [result, setResult] = useState<PredictionResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handlePredict() {
-    if (!selectedFile || !token) return;
+    if (!selectedFile) return;
     setError(null);
     setResult(null);
     setIsSubmitting(true);
     try {
-      const response = await predict(selectedFile, token);
+      const response = await predict(selectedFile);
       setResult(response);
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.status === 401) {
           setError("Your session has expired. Please sign in again.");
-          logout();
+          void logout();
         } else {
           setError(err.message);
         }
@@ -39,7 +39,7 @@ export function TriagePage() {
     <div className="triage-page">
       <header className="triage-header">
         <h1>PulmoGuard</h1>
-        <button className="logout-button" onClick={logout}>
+        <button className="logout-button" onClick={() => void logout()}>
           Sign out
         </button>
       </header>

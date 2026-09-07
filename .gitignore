@@ -38,3 +38,11 @@ kaggle.json
 .ruff_cache/
 build/
 *.egg-info/
+
+# Local secrets / env files
+.env
+.env.*
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*

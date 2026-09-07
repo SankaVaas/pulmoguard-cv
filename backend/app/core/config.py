@@ -46,6 +46,14 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
+    # --- Cookie-based session (browser clients) ---
+    # The frontend receives its JWT as an httpOnly cookie rather than in a
+    # JS-readable response body field, so it's never exposed to page
+    # JavaScript (mitigates XSS token theft). API/CLI clients can still use
+    # the bearer token returned in the /token response body directly - see
+    # docs/ARCHITECTURE.md §5.3 for the full rationale.
+    AUTH_COOKIE_NAME: str = "pulmoguard_access_token"
+
     # --- Bootstrap admin user ---
     # A single-user credential store is intentional for this project's scope
     # (an internal clinical-triage tool, not a multi-tenant SaaS). See
@@ -61,7 +69,12 @@ class Settings(BaseSettings):
     ML_CHECKPOINT_PATH: str = "../ml/outputs/checkpoints/pulmoguard_best.pt"
 
     # --- Rate limiting ---
+    # Applies to all routes by default via SlowAPIMiddleware; the auth
+    # endpoint gets its own (stricter) override since brute-force login
+    # attempts are the primary risk that rate limiting defends against here.
     RATE_LIMIT_PER_MINUTE: int = 30
+    AUTH_RATE_LIMIT_PER_MINUTE: int = 10
+    RATE_LIMIT_ENABLED: bool = True
 
     @field_validator("ENVIRONMENT")
     @classmethod
